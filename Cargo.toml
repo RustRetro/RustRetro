@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "./nestadia-rustretro",
+    "./rustretro-plugin",
+    "./rustretro-wasmtime-runner",
+    "./rustretro-wgpu",
+]

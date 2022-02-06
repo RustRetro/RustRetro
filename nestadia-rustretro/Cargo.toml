@@ -1,0 +1,13 @@
+[package]
+name = "nestadia-rustretro"
+version = "0.0.1"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nestadia = { git = "https://github.com/zer0x64/nestadia", rev = "4efe8911f7d248c27cbb9c269ddb9dae8745647f" }
+rustretro-plugin = { path = "../rustretro-plugin" }

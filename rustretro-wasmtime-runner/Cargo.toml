@@ -1,0 +1,10 @@
+[package]
+edition = "2021"
+name = "rustretro-wasmtime-runner"
+version = "0.0.1"
+
+[dependencies]
+rustretro-plugin = { path = "../rustretro-plugin" }
+bincode = "1.3.3"
+serde = "1.0.136"
+wasmtime = "0.33"
