@@ -6,3 +6,4 @@ members = [
     "./rustretro-wasmtime-runner",
     "./rustretro-wgpu",
 ]
+resolver = "2"

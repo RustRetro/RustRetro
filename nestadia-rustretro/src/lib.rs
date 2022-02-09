@@ -1,7 +1,7 @@
 #![no_std]
 
-use rustretro_plugin::*;
 use nestadia::Emulator;
+use rustretro_plugin::*;
 
 extern crate alloc;
 
