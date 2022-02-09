@@ -1,23 +1,23 @@
 #![no_std]
 
 use rustretro_plugin::*;
-
 use nestadia::Emulator;
 
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use alloc::string::ToString;
+use alloc::vec::Vec;
 
 struct NestadiaRustretro {
     emulator: Emulator,
 }
 
+#[rustretro_plugin]
 impl RustretroPlugin for NestadiaRustretro {
     fn create_core(rom: &[u8]) -> Box<Self> {
         Box::new(Self {
-            emulator: Emulator::new(rom, None).unwrap()
+            emulator: Emulator::new(rom, None).unwrap(),
         })
     }
 
@@ -28,7 +28,7 @@ impl RustretroPlugin for NestadiaRustretro {
             height: 240,
 
             pixel_format: PixelFormat::RGBA,
-            frames_per_seconds: 59.94f32
+            frames_per_seconds: 59.94f32,
         })
     }
 
@@ -52,5 +52,3 @@ impl RustretroPlugin for NestadiaRustretro {
         buffer.to_vec()
     }
 }
-
-rustretro_plugin_register!(NestadiaRustretro);

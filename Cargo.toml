@@ -2,6 +2,7 @@
 members = [
     "./nestadia-rustretro",
     "./rustretro-plugin",
+    "./rustretro-procmacro",
     "./rustretro-wasmtime-runner",
     "./rustretro-wgpu",
 ]

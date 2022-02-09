@@ -1,6 +1,6 @@
 use std::borrow::BorrowMut;
 
-use bincode::deserialize;
+use rustretro_plugin::serde_json;
 use rustretro_plugin::{ControllerInput, Metadata};
 use wasmtime::*;
 
@@ -15,6 +15,15 @@ pub struct Runner {
     wasm_controller_input: TypedFunc<(u32, u32), ()>,
     wasm_clock_until_frame: TypedFunc<u32, u32>,
     wasm_free_frame: TypedFunc<(u32, u32), ()>,
+    wasm_free_emulator: TypedFunc<u32, ()>,
+}
+
+impl Drop for Runner {
+    fn drop(&mut self) {
+        self.wasm_free_emulator
+            .call(&mut self.store, self.emulator_pointer)
+            .unwrap();
+    }
 }
 
 impl Runner {
@@ -48,9 +57,9 @@ impl Runner {
             .call(&mut store, emulator_pointer)
             .unwrap();
 
-        let metadata: Metadata = deserialize(&read_return_vec(&memory, &mut store, 0)).unwrap();
+        let metadata_bytes = read_return_vec(&memory, &mut store, 0);
 
-        println!("{metadata:?}");
+        let metadata: Metadata = serde_json::from_slice(&metadata_bytes).unwrap();
 
         let wasm_controller_input = instance
             .get_typed_func::<(u32, u32), (), _>(&mut store, "__controller_input")
@@ -61,6 +70,10 @@ impl Runner {
 
         let wasm_free_frame = instance
             .get_typed_func::<(u32, u32), (), _>(&mut store, "__free_frame")
+            .unwrap();
+
+        let wasm_free_emulator = instance
+            .get_typed_func::<u32, (), _>(&mut store, "__free_emulator")
             .unwrap();
 
         Self {
@@ -74,6 +87,7 @@ impl Runner {
             wasm_controller_input,
             wasm_clock_until_frame,
             wasm_free_frame,
+            wasm_free_emulator,
         }
     }
 
