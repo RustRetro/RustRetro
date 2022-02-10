@@ -494,7 +494,6 @@ fn main() {
         // Note that this locks FPS at 60, however logic and FPS are bound together on the NES so this is normal.
         Event::RedrawEventsCleared => {
             let elapsed_time = state.last_frame_time.elapsed();
-            println!("{elapsed_time:?}");
             if elapsed_time >= frame_time {
                 state.last_frame_time = Instant::now();
                 window.request_redraw()

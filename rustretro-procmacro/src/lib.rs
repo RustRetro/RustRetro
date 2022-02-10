@@ -3,7 +3,13 @@ use proc_macro::TokenStream;
 
 #[proc_macro_attribute]
 pub fn rustretro_plugin(_attr: TokenStream, tokens: TokenStream) -> TokenStream {
-    let trait_impl: syn::ItemImpl = syn::parse_macro_input!(tokens);
+    let tokens = proc_macro2::TokenStream::from(tokens);
+    let item: syn::Item = syn::parse2(tokens).expect("Unable to parse");
+
+    let trait_impl = match item {
+        syn::Item::Impl(x) => x,
+        _ => panic!("The attribute should be on an impl block"),
+    };
 
     // Get the type identifier
     let struct_ident = match *trait_impl.self_ty.clone() {
@@ -19,39 +25,29 @@ pub fn rustretro_plugin(_attr: TokenStream, tokens: TokenStream) -> TokenStream 
 
         extern crate alloc as _rustretro_plugin_alloc;
         #[no_mangle]
-        pub fn __create_core() -> u32 {
-            let rom = unsafe {
-                let mut buffer = [0u8; 4];
-                let length: &[u8] = ::core::slice::from_raw_parts(0 as *const u8, 4);
-
-                buffer.copy_from_slice(length);
-                let length = u32::from_le_bytes(buffer);
-
-                ::core::slice::from_raw_parts(4 as *const u8, length as usize)
-            };
-
+        pub unsafe fn __rustretro_plugin_create_core(ptr: u32, length: u32) -> u32 {
+            let rom = ::core::slice::from_raw_parts(ptr as *const u8, length as usize);
             let emulator = #struct_ident::create_core(rom);
 
             ::_rustretro_plugin_alloc::boxed::Box::into_raw(emulator) as u32
         }
 
         #[no_mangle]
-        pub unsafe fn __get_metadata(ptr: u32) {
+        pub unsafe fn __rustretro_plugin_get_metadata(ptr: u32) -> u64 {
             let emulator = &mut *(ptr as *mut #struct_ident);
 
             let metadata = emulator.get_metadata();
 
             let data = ::rustretro_plugin::serde_json::to_vec(&metadata).unwrap();
+            let length = data.len() as u64;
 
-            let buffer = ::core::slice::from_raw_parts_mut(0 as *mut u8, data.len() + 4);
+            let ptr = ::_rustretro_plugin_alloc::boxed::Box::into_raw(data.into_boxed_slice()) as *mut u8 as u64;
 
-            let length = data.len().to_le_bytes();
-            buffer[0..4].copy_from_slice(&length);
-            buffer[4..].copy_from_slice(&data);
+            ptr | (length << 32)
         }
 
         #[no_mangle]
-        pub unsafe fn __controller_input(ptr: u32, input: u32) {
+        pub unsafe fn __rustretro_plugin_controller_input(ptr: u32, input: u32) {
             let emulator = &mut *(ptr as *mut #struct_ident);
 
             let input = ::rustretro_plugin::ControllerInput::from_bits_truncate(input as u8);
@@ -59,21 +55,24 @@ pub fn rustretro_plugin(_attr: TokenStream, tokens: TokenStream) -> TokenStream 
         }
 
         #[no_mangle]
-        pub unsafe fn __clock_until_frame(ptr: u32) -> u32 {
+        pub unsafe fn __rustretro_plugin_clock_until_frame(ptr: u32) -> u64 {
             let emulator = &mut *(ptr as *mut #struct_ident);
             let frame = emulator.clock_until_frame();
+            let length = frame.len() as u64;
 
-            let buffer = ::core::slice::from_raw_parts_mut(0 as *mut u8, frame.len() + 4);
+            let ptr = ::_rustretro_plugin_alloc::boxed::Box::into_raw(frame.into_boxed_slice()) as *mut u8
+                as u64;
 
-            let length = frame.len().to_le_bytes();
-            buffer[0..4].copy_from_slice(&length);
-
-            ::_rustretro_plugin_alloc::boxed::Box::into_raw(frame.into_boxed_slice()) as *mut u8
-                as u32
+            ptr | (length << 32)
         }
 
         #[no_mangle]
-        pub unsafe fn __free_frame(ptr: u32, length: u32) {
+        pub unsafe fn __rustretro_plugin_alloc_vec(length: u32) -> u32 {
+            Box::into_raw(::_rustretro_plugin_alloc::vec![0u8; length as usize].into_boxed_slice()) as *mut u8 as u32
+        }
+
+        #[no_mangle]
+        pub unsafe fn __rustretro_plugin_free_vec(ptr: u32, length: u32) {
             ::_rustretro_plugin_alloc::boxed::Box::from_raw(::core::slice::from_raw_parts_mut(
                 ptr as *mut u8,
                 length as usize,
@@ -81,7 +80,7 @@ pub fn rustretro_plugin(_attr: TokenStream, tokens: TokenStream) -> TokenStream 
         }
 
         #[no_mangle]
-        pub unsafe fn __free_emulator(ptr: u32) {
+        pub unsafe fn __rustretro_plugin_free_emulator(ptr: u32) {
             ::_rustretro_plugin_alloc::boxed::Box::from_raw(ptr as *mut #struct_ident);
         }
     };
