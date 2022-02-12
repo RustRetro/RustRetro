@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::PixelFormat;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Metadata {
     pub name: alloc::string::String,
     pub width: u32,
