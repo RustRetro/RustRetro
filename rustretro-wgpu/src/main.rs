@@ -1,7 +1,9 @@
+use emulation_thread::EmulationMessage;
 use futures::executor::block_on;
 use wgpu::util::DeviceExt;
 
-use std::time::{Duration, Instant};
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 use winit::{
     event::*,
@@ -14,6 +16,8 @@ use structopt::StructOpt;
 
 use rustretro_plugin::ControllerInput;
 use rustretro_wasmtime_runner::Runner;
+
+mod emulation_thread;
 
 #[derive(Debug, StructOpt)]
 struct Opt {
@@ -54,20 +58,18 @@ impl Vertex {
 }
 
 struct State {
-    emulator: Runner,
+    emulator_handle: Sender<EmulationMessage>,
     controller1: ControllerInput,
-    last_frame_time: Instant,
 
     surface: wgpu::Surface,
     config: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: Arc<wgpu::Queue>,
     size: winit::dpi::PhysicalSize<u32>,
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
 
-    screen_texture: wgpu::Texture,
     screen_bind_group: wgpu::BindGroup,
 }
 
@@ -100,12 +102,14 @@ impl State {
             .await
             .unwrap();
 
+        // Using an Arc because this will be shared with the emulation thread
+        let queue = Arc::new(queue);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface.get_preferred_format(&adapter).unwrap(),
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::Immediate,
+            present_mode: wgpu::PresentMode::Fifo,
         };
         surface.configure(&device, &config);
 
@@ -119,6 +123,7 @@ impl State {
             depth_or_array_layers: 1,
         };
 
+        // Using an Arc here because this will be shared with the emulation thread
         let screen_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Screen Texture"),
             size: texture_size,
@@ -280,10 +285,11 @@ impl State {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let emulator_handle = emulation_thread::start(emulator, queue.clone(), screen_texture);
+
         Self {
-            emulator,
+            emulator_handle,
             controller1: Default::default(),
-            last_frame_time: Instant::now(),
 
             surface,
             config,
@@ -294,7 +300,6 @@ impl State {
             vertex_buffer,
             index_buffer,
 
-            screen_texture,
             screen_bind_group,
         }
     }
@@ -322,7 +327,9 @@ impl State {
                     if let Ok(f) = virtual_keycode_to_controller_input(key_code) {
                         self.controller1.insert(f);
 
-                        self.emulator.controller_input(self.controller1);
+                        let _ = self
+                            .emulator_handle
+                            .send(EmulationMessage::Input(self.controller1));
                         true
                     } else {
                         false
@@ -337,7 +344,9 @@ impl State {
                     if let Ok(f) = virtual_keycode_to_controller_input(key_code) {
                         self.controller1.remove(f);
 
-                        self.emulator.controller_input(self.controller1);
+                        let _ = self
+                            .emulator_handle
+                            .send(EmulationMessage::Input(self.controller1));
                         true
                     } else {
                         false
@@ -349,39 +358,9 @@ impl State {
         }
     }
 
-    /// Update the game state
-    fn update(&mut self) {
-        let frame = self.emulator.clock_until_frame();
-
-        let emulator_width = self.emulator.get_metadata().width;
-        let emulator_height = self.emulator.get_metadata().height;
-
-        // Update texture
-        let texture_size = wgpu::Extent3d {
-            width: emulator_width,
-            height: emulator_height,
-            depth_or_array_layers: 1,
-        };
-
-        self.queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &self.screen_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &frame,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: std::num::NonZeroU32::new(4 * emulator_width),
-                rows_per_image: std::num::NonZeroU32::new(emulator_height),
-            },
-            texture_size,
-        );
-    }
-
     /// Render the screen
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        println!("Rendering...");
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -423,6 +402,12 @@ impl State {
         output.present();
 
         Ok(())
+    }
+}
+
+impl Drop for State {
+    fn drop(&mut self) {
+        let _ = self.emulator_handle.send(EmulationMessage::Stop);
     }
 }
 
@@ -473,34 +458,18 @@ fn main() {
 
     window.set_title(&emulator.get_metadata().name);
 
-    let frame_time = Duration::from_secs_f32(1.0f32 / emulator.get_metadata().frames_per_seconds);
-
     // Wait until WGPU is ready
     let mut state = block_on(State::new(&window, emulator));
 
     // Handle window events
     event_loop.run(move |event, _, control_flow| match event {
-        Event::RedrawRequested(_) => {
-            state.update();
-            match state.render() {
-                Ok(_) => {}
-                Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-                Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                Err(e) => eprintln!("{:?}", e),
-            }
-        }
-
-        // If renderer is free, sync with 60 FPS and request the next frame.
-        // Note that this locks FPS at 60, however logic and FPS are bound together on the NES so this is normal.
-        Event::RedrawEventsCleared => {
-            let elapsed_time = state.last_frame_time.elapsed();
-            if elapsed_time >= frame_time {
-                state.last_frame_time = Instant::now();
-                window.request_redraw()
-            } else {
-                *control_flow = ControlFlow::WaitUntil(Instant::now() + frame_time - elapsed_time)
-            }
-        }
+        Event::RedrawRequested(_) => match state.render() {
+            Ok(_) => {}
+            Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+            Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+            Err(e) => eprintln!("{:?}", e),
+        },
+        Event::MainEventsCleared => window.request_redraw(),
         Event::WindowEvent {
             ref event,
             window_id,
