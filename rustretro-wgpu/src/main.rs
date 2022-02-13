@@ -420,7 +420,7 @@ impl Drop for State {
         std::mem::swap(&mut self.thread_join_handles, &mut handles);
 
         for join_handle in handles {
-            let _ = join_handle.join();
+            join_handle.join().unwrap(); // unwrap here is to bubble up panics
         }
     }
 }
@@ -468,7 +468,7 @@ fn main() {
     let core = std::fs::read(core_path).expect("Could not read the core file");
 
     // Create the emulator
-    let emulator = Runner::new(&core, &rom);
+    let emulator = Runner::new(&core, &rom, 1000);
 
     window.set_title(&emulator.get_metadata().name);
 

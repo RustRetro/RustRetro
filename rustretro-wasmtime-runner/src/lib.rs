@@ -1,9 +1,17 @@
+use std::sync::mpsc::Sender;
+use std::thread::JoinHandle;
+use std::time::Duration;
+
 use rustretro_plugin::serde_json;
 use rustretro_plugin::{ControllerInput, Metadata};
 use wasmtime::*;
 
 pub struct Runner {
     emulator_pointer: u32,
+
+    timeout_ms: u64,
+    epoch_handle: Option<JoinHandle<()>>,
+    epoch_stop_sender: Sender<()>,
 
     metadata: Metadata,
 
@@ -22,6 +30,17 @@ impl Drop for Runner {
         self.wasm_free_emulator
             .call(&mut self.store, self.emulator_pointer)
             .unwrap();
+
+        // Stop the epoch
+        self.epoch_stop_sender
+            .send(())
+            .expect("Sending shouldn't fail if the thread didn't panic");
+        match self.epoch_handle.take() {
+            Some(x) => {
+                x.join().unwrap(); // Unwrap to bubble up errors
+            }
+            _ => {}
+        };
     }
 }
 
@@ -39,16 +58,33 @@ impl Drop for WasmVec {
 }
 
 impl Runner {
-    pub fn new(core: &[u8], rom: &[u8]) -> Self {
+    ///
+    pub fn new(core: &[u8], rom: &[u8], timeout_ms: u64) -> Self {
         // Optimize the engine for execution speed
         let mut config = Config::new();
         config.cranelift_opt_level(OptLevel::Speed);
+        config.epoch_interruption(true);
 
         // Compile the WASM module
         let engine = Engine::new(&config).expect("wgpu config is invalid!");
         let module = Module::new(&engine, core).unwrap();
         let mut store = Store::new(&engine, "Rustretro Wasmtime Runner".to_string());
         let instance = Instance::new(&mut store, &module, &[]).unwrap();
+
+        // Limit time for the new function
+        store.set_epoch_deadline(timeout_ms);
+
+        // Increment the epoch
+        let (epoch_stop_sender, epoch_stop_receiver) = std::sync::mpsc::channel();
+        let epoch_handle = Some(std::thread::spawn(move || loop {
+            match epoch_stop_receiver.try_recv() {
+                Ok(_) => break,
+                _ => {}
+            };
+
+            std::thread::sleep(Duration::from_millis(1));
+            engine.increment_epoch();
+        }));
 
         // The default memory is simply called "memory"
         let memory = instance.get_memory(&mut store, "memory").unwrap();
@@ -120,6 +156,10 @@ impl Runner {
         Self {
             emulator_pointer,
 
+            timeout_ms,
+            epoch_handle,
+            epoch_stop_sender,
+
             store,
             memory,
 
@@ -141,6 +181,8 @@ impl Runner {
     }
 
     pub fn clock_until_frame(&mut self) -> Vec<u8> {
+        self.store.set_epoch_deadline(self.timeout_ms);
+
         let ptr = self
             .wasm_clock_until_frame
             .call(&mut self.store, self.emulator_pointer)

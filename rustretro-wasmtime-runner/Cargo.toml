@@ -6,4 +6,4 @@ version = "0.0.1"
 [dependencies]
 rustretro-plugin = { path = "../rustretro-plugin" }
 serde = "1.0.136"
-wasmtime = "0.33"
+wasmtime = "0.34"
