@@ -40,14 +40,20 @@ impl Drop for WasmVec {
 
 impl Runner {
     pub fn new(core: &[u8], rom: &[u8]) -> Self {
-        let engine = Engine::default();
+        // Optimize the engine for execution speed
+        let mut config = Config::new();
+        config.cranelift_opt_level(OptLevel::Speed);
+
+        // Compile the WASM module
+        let engine = Engine::new(&config).expect("wgpu config is invalid!");
         let module = Module::new(&engine, core).unwrap();
         let mut store = Store::new(&engine, "Rustretro Wasmtime Runner".to_string());
         let instance = Instance::new(&mut store, &module, &[]).unwrap();
 
-        // It isn't really clear if the default memory is called memory
+        // The default memory is simply called "memory"
         let memory = instance.get_memory(&mut store, "memory").unwrap();
 
+        // Bind allocation functions
         let wasm_alloc_vec = instance
             .get_typed_func::<u32, u32, _>(&mut store, "__rustretro_plugin_alloc_vec")
             .unwrap();
@@ -74,6 +80,7 @@ impl Runner {
         // Free the ROM buffer
         free_vec_static(&mut store, &wasm_free_vec, rom_buffer);
 
+        // Fetch the core metadata
         let wasm_get_metadata = instance
             .get_typed_func::<u32, u64, _>(&mut store, "__rustretro_plugin_get_metadata")
             .unwrap();
@@ -98,6 +105,7 @@ impl Runner {
         // Free the metadata buffer
         free_vec_static(&mut store, &wasm_free_vec, metadata_buffer);
 
+        // Bind exposed functions
         let wasm_controller_input = instance
             .get_typed_func::<(u32, u32), (), _>(&mut store, "__rustretro_plugin_controller_input")
             .unwrap();

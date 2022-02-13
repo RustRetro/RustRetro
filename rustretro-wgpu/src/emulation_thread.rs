@@ -2,6 +2,7 @@ use rustretro_plugin::ControllerInput;
 use rustretro_wasmtime_runner::Runner;
 use std::{
     sync::{mpsc, Arc},
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -14,10 +15,10 @@ pub fn start(
     mut emulator: Runner,
     queue: Arc<wgpu::Queue>,
     texture: wgpu::Texture,
-) -> mpsc::Sender<EmulationMessage> {
+) -> (JoinHandle<()>, mpsc::Sender<EmulationMessage>) {
     let (input_sender, input_receiver) = mpsc::channel::<EmulationMessage>();
 
-    std::thread::spawn(move || {
+    let join_handle = std::thread::spawn(move || {
         let metadata = emulator.get_metadata().clone();
 
         let frame_time = Duration::from_secs_f32(1.0 / metadata.frames_per_seconds);
@@ -69,5 +70,6 @@ pub fn start(
             }
         }
     });
-    input_sender
+
+    (join_handle, input_sender)
 }

@@ -2,8 +2,8 @@ use emulation_thread::EmulationMessage;
 use futures::executor::block_on;
 use wgpu::util::DeviceExt;
 
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
+use std::{sync::mpsc::Sender, thread::JoinHandle};
 
 use winit::{
     event::*,
@@ -60,6 +60,8 @@ impl Vertex {
 struct State {
     emulator_handle: Sender<EmulationMessage>,
     controller1: ControllerInput,
+
+    thread_join_handles: Vec<JoinHandle<()>>,
 
     surface: wgpu::Surface,
     config: wgpu::SurfaceConfiguration,
@@ -285,10 +287,14 @@ impl State {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let emulator_handle = emulation_thread::start(emulator, queue.clone(), screen_texture);
+        let (join_handle, emulator_handle) =
+            emulation_thread::start(emulator, queue.clone(), screen_texture);
+
+        let thread_join_handles = vec![join_handle];
 
         Self {
             emulator_handle,
+            thread_join_handles,
             controller1: Default::default(),
 
             surface,
@@ -360,7 +366,6 @@ impl State {
 
     /// Render the screen
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        println!("Rendering...");
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -407,7 +412,16 @@ impl State {
 
 impl Drop for State {
     fn drop(&mut self) {
+        // Stop the emulator
         let _ = self.emulator_handle.send(EmulationMessage::Stop);
+
+        // Wait for the threads to stop
+        let mut handles = Vec::new();
+        std::mem::swap(&mut self.thread_join_handles, &mut handles);
+
+        for join_handle in handles {
+            let _ = join_handle.join();
+        }
     }
 }
 
